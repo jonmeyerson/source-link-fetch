@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '11.0.x'
+          dotnet-quality: 'preview'
+
+      - name: Restore
+        run: dotnet restore src/SourceLinkFetch/SourceLinkFetch.csproj
+
+      - name: Build
+        run: dotnet build src/SourceLinkFetch/SourceLinkFetch.csproj -c Release --no-restore
+
+      - name: Pack
+        run: dotnet pack src/SourceLinkFetch/SourceLinkFetch.csproj -c Release --no-build
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: artifacts/package/release/*.nupkg
