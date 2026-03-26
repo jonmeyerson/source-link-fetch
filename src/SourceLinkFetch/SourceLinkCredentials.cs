@@ -1,0 +1,51 @@
+using System.Net.Http.Headers;
+using System.Text;
+
+namespace SourceLinkFetch;
+
+/// <summary>
+/// Configures an <see cref="HttpClient"/> with credentials for accessing
+/// private repository source files through SourceLink URLs.
+/// </summary>
+/// <remarks>
+/// Credentials are applied as HTTP request headers — never embedded in URLs.
+/// Tokens should be sourced from environment variables or a secrets manager,
+/// not hardcoded in source code.
+/// </remarks>
+public static class SourceLinkCredentials
+{
+    /// <summary>
+    /// Configures the client to authenticate with GitHub (github.com or GitHub Enterprise)
+    /// using a personal access token.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="token">
+    /// A GitHub personal access token with <c>repo</c> scope (classic),
+    /// or <c>contents:read</c> scope (fine-grained).
+    /// </param>
+    public static void ConfigureGitHub(HttpClient client, string token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    /// <summary>
+    /// Configures the client to authenticate with Azure DevOps
+    /// (dev.azure.com, *.visualstudio.com, or an on-premises Azure DevOps Server)
+    /// using a personal access token.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="personalAccessToken">
+    /// An Azure DevOps personal access token with at least <c>Code (Read)</c> scope.
+    /// </param>
+    public static void ConfigureAzureDevOps(HttpClient client, string personalAccessToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(personalAccessToken);
+        // Azure DevOps Basic auth encodes an empty username and the PAT as password.
+        string encoded = Convert.ToBase64String(
+            Encoding.ASCII.GetBytes($":{personalAccessToken}"));
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", encoded);
+    }
+}
