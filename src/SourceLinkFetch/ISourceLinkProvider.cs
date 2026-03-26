@@ -13,9 +13,22 @@ public interface ISourceLinkProvider
     string Name { get; }
 
     /// <summary>
-    /// Returns true when <paramref name="resolvedUrl"/> was produced by this provider.
+    /// Returns true when <paramref name="urlTemplate"/> was produced by this provider.
+    /// The value may contain a <c>*</c> wildcard as stored in the SourceLink JSON.
     /// </summary>
-    bool Matches(string resolvedUrl);
+    bool Matches(string urlTemplate);
+
+    /// <summary>
+    /// Extracts the repository root URL from a SourceLink URL template.
+    /// Returns null when the template is not recognised.
+    /// </summary>
+    string? ExtractRepositoryUrl(string urlTemplate);
+
+    /// <summary>
+    /// Extracts the commit hash from a SourceLink URL template.
+    /// Returns null when the commit cannot be determined.
+    /// </summary>
+    string? ExtractCommitHash(string urlTemplate);
 
     /// <summary>
     /// Converts a raw or API URL (as stored in the SourceLink JSON) to a URL

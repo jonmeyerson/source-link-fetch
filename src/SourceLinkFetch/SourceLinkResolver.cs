@@ -67,103 +67,30 @@ public class SourceLinkResolver
 
     /// <summary>
     /// Extracts the repository URL from SourceLink document mappings.
-    /// Supports GitHub, GitLab, Bitbucket Cloud, Bitbucket Server, Gitea, GitWeb,
-    /// Azure DevOps (dev.azure.com and *.visualstudio.com), and Azure DevOps Server
-    /// on-premises.
+    /// Delegates to the detected <see cref="ISourceLinkProvider"/>.
     /// </summary>
     public string? ExtractRepositoryUrl()
     {
         foreach (var (_, urlTemplate) in _documentMappings)
         {
-            // GitHub: https://raw.githubusercontent.com/{owner}/{repo}/
-            var githubMatch = Regex.Match(urlTemplate,
-                @"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/");
-            if (githubMatch.Success)
-                return $"https://github.com/{githubMatch.Groups[1].Value}/{githubMatch.Groups[2].Value}";
-
-            // Azure DevOps cloud: https://dev.azure.com/{org}/{project}/_apis/git/repositories/{repo}/
-            var adoMatch = Regex.Match(urlTemplate,
-                @"https://dev\.azure\.com/([^/]+)/([^/]+)/_apis/git/repositories/([^/?]+)");
-            if (adoMatch.Success)
-                return $"https://dev.azure.com/{adoMatch.Groups[1].Value}/{adoMatch.Groups[2].Value}/_git/{adoMatch.Groups[3].Value}";
-
-            // Azure DevOps legacy: https://{account}.visualstudio.com/{project}/_apis/git/repositories/{repo}/
-            var vsoMatch = Regex.Match(urlTemplate,
-                @"https://([^.]+)\.visualstudio\.com/([^/]+)/_apis/git/repositories/([^/?]+)");
-            if (vsoMatch.Success)
-                return $"https://{vsoMatch.Groups[1].Value}.visualstudio.com/{vsoMatch.Groups[2].Value}/_git/{vsoMatch.Groups[3].Value}";
-
-            // GitLab (cloud or self-hosted): https://{domain}/{owner}/{repo}/-/raw/{commit}/
-            // The /-/ segment is GitLab-specific and distinguishes it from other hosts.
-            var gitlabMatch = Regex.Match(urlTemplate,
-                @"https://([^/]+)/([^/]+)/([^/]+)/-/raw/");
-            if (gitlabMatch.Success)
-                return $"https://{gitlabMatch.Groups[1].Value}/{gitlabMatch.Groups[2].Value}/{gitlabMatch.Groups[3].Value}";
-
-            // Bitbucket Cloud: https://bitbucket.org/{workspace}/{repo}/raw/{commit}/
-            var bbCloudMatch = Regex.Match(urlTemplate,
-                @"https://bitbucket\.org/([^/]+)/([^/]+)/raw/");
-            if (bbCloudMatch.Success)
-                return $"https://bitbucket.org/{bbCloudMatch.Groups[1].Value}/{bbCloudMatch.Groups[2].Value}";
-
-            // Bitbucket Server (on-prem): https://{domain}/projects/{proj}/repos/{repo}/raw/
-            var bbServerMatch = Regex.Match(urlTemplate,
-                @"https://([^/]+)/projects/([^/]+)/repos/([^/]+)/raw/");
-            if (bbServerMatch.Success)
-                return $"https://{bbServerMatch.Groups[1].Value}/projects/{bbServerMatch.Groups[2].Value}/repos/{bbServerMatch.Groups[3].Value}";
-
-            // Gitea (self-hosted): https://{domain}/{owner}/{repo}/raw/commit/{commit}/
-            // Checked after Bitbucket Server because Bitbucket Server's /projects/.../repos/ is more specific.
-            var giteaMatch = Regex.Match(urlTemplate,
-                @"https://([^/]+)/([^/]+)/([^/]+)/raw/commit/");
-            if (giteaMatch.Success)
-                return $"https://{giteaMatch.Groups[1].Value}/{giteaMatch.Groups[2].Value}/{giteaMatch.Groups[3].Value}";
-
-            // GitWeb (self-hosted): https://{domain}/gitweb?p={repo}.git;...
-            var gitwebMatch = Regex.Match(urlTemplate,
-                @"https://([^/]+)/gitweb\?p=([^;]+\.git)");
-            if (gitwebMatch.Success)
-                return $"https://{gitwebMatch.Groups[1].Value}/gitweb?p={gitwebMatch.Groups[2].Value}";
-
-            // Azure DevOps Server on-premises: https://{host}/{collection}/{project}/_apis/git/repositories/{repo}/
-            // Catch-all after the specific dev.azure.com and visualstudio.com checks above.
-            var adoOnPremMatch = Regex.Match(urlTemplate,
-                @"https://([^/]+)/([^/]+)/([^/]+)/_apis/git/repositories/([^/?]+)");
-            if (adoOnPremMatch.Success)
-                return $"https://{adoOnPremMatch.Groups[1].Value}/{adoOnPremMatch.Groups[2].Value}/{adoOnPremMatch.Groups[3].Value}/_git/{adoOnPremMatch.Groups[4].Value}";
+            string? url = SourceLinkProviders.Detect(urlTemplate)?.ExtractRepositoryUrl(urlTemplate);
+            if (url is not null)
+                return url;
         }
         return null;
     }
 
     /// <summary>
     /// Extracts the commit hash from SourceLink URL patterns.
-    /// Handles path-based hashes (GitHub, GitLab, Bitbucket Cloud, Gitea),
-    /// query-parameter hashes (Azure DevOps <c>version=</c>, Bitbucket Server <c>at=</c>,
-    /// GitWeb <c>hb=</c>).
+    /// Delegates to the detected <see cref="ISourceLinkProvider"/>.
     /// </summary>
     public string? ExtractCommitHash()
     {
         foreach (var (_, urlTemplate) in _documentMappings)
         {
-            // Commit hash as a URL path segment (GitHub, GitLab, Bitbucket Cloud, Gitea).
-            var pathMatch = Regex.Match(urlTemplate, @"/([0-9a-f]{40})(?:/|$|\?)", RegexOptions.IgnoreCase);
-            if (pathMatch.Success)
-                return pathMatch.Groups[1].Value;
-
-            // Azure DevOps: version={commitHash} query parameter (& or ? delimited).
-            var adoMatch = Regex.Match(urlTemplate, @"[?&]version=([0-9a-f]{40})(?:&|$)", RegexOptions.IgnoreCase);
-            if (adoMatch.Success)
-                return adoMatch.Groups[1].Value;
-
-            // Bitbucket Server: at={commitHash} query parameter.
-            var bbMatch = Regex.Match(urlTemplate, @"[?&]at=([0-9a-f]{40})(?:&|$)", RegexOptions.IgnoreCase);
-            if (bbMatch.Success)
-                return bbMatch.Groups[1].Value;
-
-            // GitWeb: hb={commitHash} semicolon-delimited query parameter.
-            var gitwebMatch = Regex.Match(urlTemplate, @"[?;]hb=([0-9a-f]{40})(?:;|$)", RegexOptions.IgnoreCase);
-            if (gitwebMatch.Success)
-                return gitwebMatch.Groups[1].Value;
+            string? hash = SourceLinkProviders.Detect(urlTemplate)?.ExtractCommitHash(urlTemplate);
+            if (hash is not null)
+                return hash;
         }
         return null;
     }

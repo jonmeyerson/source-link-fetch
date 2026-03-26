@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace SourceLinkFetch;
 
@@ -41,19 +42,27 @@ public static class SourceLinkProviders
 
     /// <summary>
     /// Returns the first provider in <see cref="All"/> whose <see cref="ISourceLinkProvider.Matches"/>
-    /// returns true for <paramref name="resolvedUrl"/>, or null if none match.
+    /// returns true for <paramref name="urlTemplate"/>, or null if none match.
     /// </summary>
-    public static ISourceLinkProvider? Detect(string? resolvedUrl)
+    public static ISourceLinkProvider? Detect(string? urlTemplate)
     {
-        if (resolvedUrl is null) return null;
+        if (urlTemplate is null) return null;
         foreach (var provider in All)
-            if (provider.Matches(resolvedUrl))
+            if (provider.Matches(urlTemplate))
                 return provider;
         return null;
     }
 
-    // ---- Shared auth helpers ----------------------------------------
-    // Each encodes credentials in the way its provider requires.
+    // ---- Shared helpers ---------------------------------------------
+
+    // Most providers embed the commit hash as a 40-character hex path segment.
+    private static string? ExtractPathCommit(string urlTemplate)
+    {
+        var m = Regex.Match(urlTemplate, @"/([0-9a-f]{40})(?:/|$|\?)", RegexOptions.IgnoreCase);
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    // ---- Auth helpers -----------------------------------------------
 
     private static void ApplyBearer(HttpClient client, SourceLinkCredential cred, string name)
     {
@@ -96,6 +105,17 @@ public static class SourceLinkProviders
         public bool Matches(string url) =>
             url.Contains("//raw.githubusercontent.com/", StringComparison.OrdinalIgnoreCase);
 
+        public string? ExtractRepositoryUrl(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate,
+                @"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/");
+            return m.Success
+                ? $"https://github.com/{m.Groups[1].Value}/{m.Groups[2].Value}"
+                : null;
+        }
+
+        public string? ExtractCommitHash(string urlTemplate) => ExtractPathCommit(urlTemplate);
+
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGitHubBrowseUrl(url);
 
@@ -111,6 +131,17 @@ public static class SourceLinkProviders
         public bool Matches(string url) =>
             url.Contains("/-/raw/", StringComparison.OrdinalIgnoreCase);
 
+        public string? ExtractRepositoryUrl(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate,
+                @"https://([^/]+)/([^/]+)/([^/]+)/-/raw/");
+            return m.Success
+                ? $"https://{m.Groups[1].Value}/{m.Groups[2].Value}/{m.Groups[3].Value}"
+                : null;
+        }
+
+        public string? ExtractCommitHash(string urlTemplate) => ExtractPathCommit(urlTemplate);
+
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGitLabBrowseUrl(url);
 
@@ -124,6 +155,17 @@ public static class SourceLinkProviders
 
         public bool Matches(string url) =>
             url.Contains("//bitbucket.org/", StringComparison.OrdinalIgnoreCase);
+
+        public string? ExtractRepositoryUrl(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate,
+                @"https://bitbucket\.org/([^/]+)/([^/]+)/raw/");
+            return m.Success
+                ? $"https://bitbucket.org/{m.Groups[1].Value}/{m.Groups[2].Value}"
+                : null;
+        }
+
+        public string? ExtractCommitHash(string urlTemplate) => ExtractPathCommit(urlTemplate);
 
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToBitbucketCloudBrowseUrl(url);
@@ -143,6 +185,22 @@ public static class SourceLinkProviders
             url.Contains("/repos/", StringComparison.OrdinalIgnoreCase) &&
             url.Contains("/raw/", StringComparison.OrdinalIgnoreCase);
 
+        public string? ExtractRepositoryUrl(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate,
+                @"https://([^/]+)/projects/([^/]+)/repos/([^/]+)/raw/");
+            return m.Success
+                ? $"https://{m.Groups[1].Value}/projects/{m.Groups[2].Value}/repos/{m.Groups[3].Value}"
+                : null;
+        }
+
+        // Bitbucket Server stores the commit in the ?at= query parameter.
+        public string? ExtractCommitHash(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate, @"[?&]at=([0-9a-f]{40})(?:&|$)", RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToBitbucketServerBrowseUrl(url);
 
@@ -158,6 +216,17 @@ public static class SourceLinkProviders
         public bool Matches(string url) =>
             url.Contains("/raw/commit/", StringComparison.OrdinalIgnoreCase);
 
+        public string? ExtractRepositoryUrl(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate,
+                @"https://([^/]+)/([^/]+)/([^/]+)/raw/commit/");
+            return m.Success
+                ? $"https://{m.Groups[1].Value}/{m.Groups[2].Value}/{m.Groups[3].Value}"
+                : null;
+        }
+
+        public string? ExtractCommitHash(string urlTemplate) => ExtractPathCommit(urlTemplate);
+
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGiteaBrowseUrl(url);
 
@@ -172,6 +241,21 @@ public static class SourceLinkProviders
         public bool Matches(string url) =>
             url.Contains("/gitweb?", StringComparison.OrdinalIgnoreCase) &&
             url.Contains("a=blob_plain", StringComparison.OrdinalIgnoreCase);
+
+        public string? ExtractRepositoryUrl(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate, @"https://([^/]+)/gitweb\?p=([^;]+\.git)");
+            return m.Success
+                ? $"https://{m.Groups[1].Value}/gitweb?p={m.Groups[2].Value}"
+                : null;
+        }
+
+        // GitWeb stores the commit in the ;hb= semicolon-delimited query parameter.
+        public string? ExtractCommitHash(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate, @"[?;]hb=([0-9a-f]{40})(?:;|$)", RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : null;
+        }
 
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGitWebBrowseUrl(url);
@@ -191,6 +275,36 @@ public static class SourceLinkProviders
             url.Contains("//dev.azure.com/", StringComparison.OrdinalIgnoreCase) ||
             url.Contains(".visualstudio.com/", StringComparison.OrdinalIgnoreCase) ||
             url.Contains("/_apis/git/repositories/", StringComparison.OrdinalIgnoreCase);
+
+        public string? ExtractRepositoryUrl(string urlTemplate)
+        {
+            // Cloud: dev.azure.com/{org}/{project}/_apis/git/repositories/{repo}
+            var m = Regex.Match(urlTemplate,
+                @"https://dev\.azure\.com/([^/]+)/([^/]+)/_apis/git/repositories/([^/?]+)");
+            if (m.Success)
+                return $"https://dev.azure.com/{m.Groups[1].Value}/{m.Groups[2].Value}/_git/{m.Groups[3].Value}";
+
+            // Legacy: {account}.visualstudio.com/{project}/_apis/git/repositories/{repo}
+            m = Regex.Match(urlTemplate,
+                @"https://([^.]+)\.visualstudio\.com/([^/]+)/_apis/git/repositories/([^/?]+)");
+            if (m.Success)
+                return $"https://{m.Groups[1].Value}.visualstudio.com/{m.Groups[2].Value}/_git/{m.Groups[3].Value}";
+
+            // On-premises: {host}/{collection}/{project}/_apis/git/repositories/{repo}
+            m = Regex.Match(urlTemplate,
+                @"https://([^/]+)/([^/]+)/([^/]+)/_apis/git/repositories/([^/?]+)");
+            if (m.Success)
+                return $"https://{m.Groups[1].Value}/{m.Groups[2].Value}/{m.Groups[3].Value}/_git/{m.Groups[4].Value}";
+
+            return null;
+        }
+
+        // Azure DevOps stores the commit in the ?version= query parameter.
+        public string? ExtractCommitHash(string urlTemplate)
+        {
+            var m = Regex.Match(urlTemplate, @"[?&]version=([0-9a-f]{40})(?:&|$)", RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : null;
+        }
 
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToAzureDevOpsBrowseUrl(url);
