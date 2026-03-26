@@ -106,7 +106,7 @@ public class SourceLinkResolver
         var match = Regex.Match(rawUrl,
             @"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.+)");
         if (match.Success)
-            return $"https://github.com/{match.Groups[1].Value}/{match.Groups[2].Value}/raw/{match.Groups[3].Value}/{match.Groups[4].Value}";
+            return $"https://github.com/{match.Groups[1].Value}/{match.Groups[2].Value}/blob/{match.Groups[3].Value}/{match.Groups[4].Value}";
 
         return rawUrl;
     }
@@ -274,6 +274,12 @@ public class SourceLinkResolver
         }
 
         return null;
+    }
+
+    internal static SourceLinkResolver? CreateFromJson(string sourceLinkJson)
+    {
+        var mappings = ParseMappings(sourceLinkJson);
+        return mappings.Count == 0 ? null : new SourceLinkResolver(mappings);
     }
 
     private static Dictionary<string, string> ParseMappings(string sourceLinkJson)

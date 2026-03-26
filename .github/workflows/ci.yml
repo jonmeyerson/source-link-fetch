@@ -23,10 +23,13 @@ jobs:
           dotnet-quality: 'preview'
 
       - name: Restore
-        run: dotnet restore src/SourceLinkFetch/SourceLinkFetch.csproj
+        run: dotnet restore tests/SourceLinkFetch.Tests/SourceLinkFetch.Tests.csproj
 
       - name: Build
-        run: dotnet build src/SourceLinkFetch/SourceLinkFetch.csproj -c Release --no-restore
+        run: dotnet build tests/SourceLinkFetch.Tests/SourceLinkFetch.Tests.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test tests/SourceLinkFetch.Tests/SourceLinkFetch.Tests.csproj -c Release --no-build
 
       - name: Pack
         run: dotnet pack src/SourceLinkFetch/SourceLinkFetch.csproj -c Release --no-build
