@@ -48,4 +48,86 @@ public static class SourceLinkCredentials
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", encoded);
     }
+
+    /// <summary>
+    /// Configures the client to authenticate with GitLab (gitlab.com or a self-hosted instance)
+    /// using a personal access token.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="token">
+    /// A GitLab personal access token with <c>read_repository</c> scope.
+    /// </param>
+    public static void ConfigureGitLab(HttpClient client, string token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    /// <summary>
+    /// Configures the client to authenticate with Bitbucket Cloud (bitbucket.org)
+    /// using a username and app password.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="username">Your Bitbucket username (not email address).</param>
+    /// <param name="appPassword">
+    /// A Bitbucket app password with <c>Repositories: Read</c> permission.
+    /// App passwords are created at bitbucket.org → Personal settings → App passwords.
+    /// </param>
+    public static void ConfigureBitbucketCloud(HttpClient client, string username, string appPassword)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+        ArgumentException.ThrowIfNullOrWhiteSpace(appPassword);
+        string encoded = Convert.ToBase64String(
+            Encoding.ASCII.GetBytes($"{username}:{appPassword}"));
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", encoded);
+    }
+
+    /// <summary>
+    /// Configures the client to authenticate with Bitbucket Data Center / Server
+    /// (self-hosted) using an HTTP access token.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="token">
+    /// A Bitbucket HTTP access token with <c>Repository read</c> permission
+    /// (requires Bitbucket Server 5.5 or later).
+    /// </param>
+    public static void ConfigureBitbucketServer(HttpClient client, string token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    /// <summary>
+    /// Configures the client to authenticate with a Gitea instance using an API token.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="token">
+    /// A Gitea API token or fine-grained personal access token with repository read access.
+    /// </param>
+    public static void ConfigureGitea(HttpClient client, string token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    /// <summary>
+    /// Configures the client to use HTTP Basic authentication.
+    /// Suitable for GitWeb or other self-hosted Git servers that require Basic auth.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="username">The username.</param>
+    /// <param name="password">The password or personal access token used as a password.</param>
+    public static void ConfigureBasicAuth(HttpClient client, string username, string password)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+        ArgumentException.ThrowIfNullOrWhiteSpace(password);
+        string encoded = Convert.ToBase64String(
+            Encoding.ASCII.GetBytes($"{username}:{password}"));
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", encoded);
+    }
 }
