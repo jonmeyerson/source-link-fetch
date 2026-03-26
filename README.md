@@ -69,6 +69,74 @@ foreach (var result in results)
 }
 ```
 
+### Provider detection
+
+`SourceLinkProviders.Detect` inspects a resolved URL and returns the matching
+provider, giving you browse-URL conversion and auth configuration without
+needing to know which host produced the URL.
+
+```csharp
+// Load credentials from environment (never hardcode)
+var credentialMap = new Dictionary<ISourceLinkProvider, SourceLinkCredential>
+{
+    [SourceLinkProviders.GitHub]       = SourceLinkCredential.Token(Environment.GetEnvironmentVariable("GITHUB_TOKEN")!),
+    [SourceLinkProviders.AzureDevOps]  = SourceLinkCredential.Token(Environment.GetEnvironmentVariable("AZURE_DEVOPS_PAT")!),
+    [SourceLinkProviders.GitLab]       = SourceLinkCredential.Token(Environment.GetEnvironmentVariable("GITLAB_TOKEN")!),
+    [SourceLinkProviders.BitbucketCloud]  = SourceLinkCredential.Basic(
+                                               Environment.GetEnvironmentVariable("BITBUCKET_USER")!,
+                                               Environment.GetEnvironmentVariable("BITBUCKET_APP_PASSWORD")!),
+    [SourceLinkProviders.BitbucketServer] = SourceLinkCredential.Token(Environment.GetEnvironmentVariable("BITBUCKET_TOKEN")!),
+    [SourceLinkProviders.Gitea]        = SourceLinkCredential.Token(Environment.GetEnvironmentVariable("GITEA_TOKEN")!),
+};
+
+// One HttpClient per provider (each gets its own auth header)
+var clients = credentialMap.ToDictionary(
+    kvp => kvp.Key,
+    kvp => {
+        var client = new HttpClient();
+        kvp.Key.ConfigureAuth(client, kvp.Value);
+        return client;
+    });
+
+var documents = reader.EnumerateSourceDocuments().ToList();
+
+// Convert to browse URLs and verify, routing each document to the right client
+foreach (var doc in documents)
+{
+    var provider = SourceLinkProviders.Detect(doc.ResolvedUrl);
+    string? browseUrl = provider?.ToBrowseUrl(doc.ResolvedUrl) ?? doc.ResolvedUrl;
+    Console.WriteLine($"  {doc.FilePath} → {browseUrl}");
+}
+
+var results = await Task.WhenAll(
+    documents
+        .GroupBy(d => SourceLinkProviders.Detect(d.ResolvedUrl))
+        .Select(g =>
+        {
+            var client = g.Key is not null && clients.TryGetValue(g.Key, out var c) ? c : new HttpClient();
+            return SourceLinkVerifier.VerifyAsync(g, client);
+        }));
+```
+
+The named providers on `SourceLinkProviders` (`GitHub`, `AzureDevOps`, etc.) are
+the same instances used by `Detect`, so dictionary keying by reference works correctly.
+
+#### Custom providers
+
+Implement `ISourceLinkProvider` to support a host not covered above, then prepend
+it to detection by building a custom list:
+
+```csharp
+IReadOnlyList<ISourceLinkProvider> allProviders =
+[
+    new MyInternalGitHubEnterpriseProvider(),
+    .. SourceLinkProviders.All,  // built-ins as fallback
+];
+
+ISourceLinkProvider? provider = allProviders
+    .FirstOrDefault(p => p.Matches(doc.ResolvedUrl));
+```
+
 ### Convert raw URLs to browsable URLs
 
 Each host stores a raw/API URL in the SourceLink JSON. Use the
