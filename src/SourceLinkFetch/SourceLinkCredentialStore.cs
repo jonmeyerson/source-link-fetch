@@ -31,7 +31,7 @@ public sealed class SourceLinkCredentialStore
     /// <param name="urlPrefix">
     /// The URL prefix to match, e.g.
     /// <c>https://raw.githubusercontent.com/my-org/</c>.
-    /// Longer prefixes take precedence over shorter ones.
+    /// If multiple registered prefixes match a request URL, the longest match wins.
     /// </param>
     /// <param name="credential">
     /// The credential to use for matching requests.
@@ -96,9 +96,6 @@ public sealed class SourceLinkCredentialStore
         }
 
         _entries.Add(new Entry(urlPrefix, provider, credential));
-
-        // Keep longest prefix first so the most-specific registration always wins.
-        _entries.Sort((a, b) => b.Prefix.Length.CompareTo(a.Prefix.Length));
     }
 
     /// <summary>
@@ -137,15 +134,22 @@ public sealed class SourceLinkCredentialStore
             {
                 string url = request.RequestUri.AbsoluteUri;
 
-                foreach (var entry in _entries) // already longest-first
+                // Find the longest prefix that actually matches this URL.
+                // Comparing across unrelated domains by length would be meaningless;
+                // only prefixes that match the URL are candidates.
+                Entry? best = null;
+                foreach (var entry in _entries)
                 {
-                    if (url.StartsWith(entry.Prefix, StringComparison.OrdinalIgnoreCase))
+                    if (url.StartsWith(entry.Prefix, StringComparison.OrdinalIgnoreCase) &&
+                        (best is null || entry.Prefix.Length > best.Prefix.Length))
                     {
-                        request.Headers.Authorization =
-                            entry.Provider.GetAuthHeader(entry.Credential);
-                        break;
+                        best = entry;
                     }
                 }
+
+                if (best is not null)
+                    request.Headers.Authorization =
+                        best.Provider.GetAuthHeader(best.Credential);
             }
 
             return base.SendAsync(request, cancellationToken);
