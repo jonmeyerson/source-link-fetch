@@ -241,30 +241,33 @@ Never hardcode credentials in source code.**
 
 ¹ Bitbucket Cloud app passwords (`Basic`) are deprecated and stop working June 2026. Use API tokens (`Bearer`) instead.
 
-#### Per-provider convenience methods
+#### Configuring a single provider
+
+Call `ConfigureAuth` on the provider — it owns the encoding rules for its host,
+so the logic lives in one place:
 
 ```csharp
-// GitHub — PAT
-SourceLinkCredentials.ConfigureGitHub(client, pat);
+// GitHub — PAT (Token) or OAuth (Bearer)
+SourceLinkProviders.GitHub.ConfigureAuth(client, SourceLinkCredential.Token(pat));
 
 // Azure DevOps — PAT
-SourceLinkCredentials.ConfigureAzureDevOps(client, pat);
+SourceLinkProviders.AzureDevOps.ConfigureAuth(client, SourceLinkCredential.Token(pat));
 
 // Azure DevOps — AAD/Entra OAuth token
-SourceLinkCredentials.ConfigureAzureDevOpsOAuth(client, aadToken);
+SourceLinkProviders.AzureDevOps.ConfigureAuth(client, SourceLinkCredential.Bearer(aadToken));
 
 // GitLab — PAT with read_repository scope
-SourceLinkCredentials.ConfigureGitLab(client, pat);
+SourceLinkProviders.GitLab.ConfigureAuth(client, SourceLinkCredential.Token(pat));
 
 // Bitbucket Cloud — API token (current standard)
-SourceLinkCredentials.ConfigureBitbucketCloudToken(client, apiToken);
+SourceLinkProviders.BitbucketCloud.ConfigureAuth(client, SourceLinkCredential.Bearer(apiToken));
 
 // Bitbucket Server — HTTP access token
-SourceLinkCredentials.ConfigureBitbucketServer(client, token);
+SourceLinkProviders.BitbucketServer.ConfigureAuth(client, SourceLinkCredential.Token(token));
 
 // Gitea — API token
-SourceLinkCredentials.ConfigureGitea(client, token);
+SourceLinkProviders.Gitea.ConfigureAuth(client, SourceLinkCredential.Token(token));
 
 // GitWeb or any Basic-auth server
-SourceLinkCredentials.ConfigureBasicAuth(client, username, password);
+SourceLinkProviders.GitWeb.ConfigureAuth(client, SourceLinkCredential.Basic(username, password));
 ```
