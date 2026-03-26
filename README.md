@@ -132,6 +132,39 @@ var results = await Task.WhenAll(
 The named providers on `SourceLinkProviders` (`GitHub`, `AzureDevOps`, etc.) are
 the same instances used by `Detect`, so dictionary keying by reference works correctly.
 
+### Per-repository credentials with `SourceLinkCredentialStore`
+
+When different organisations (or different repositories) on the same host
+require different credentials, use `SourceLinkCredentialStore`. It maps URL
+prefixes to credentials — analogous to `packageSourceCredentials` in
+`NuGet.config` — and injects the right `Authorization` header per-request via
+a `DelegatingHandler`, without touching `DefaultRequestHeaders`.
+
+```csharp
+var store = new SourceLinkCredentialStore();
+
+// Register credentials by URL prefix — longer prefixes take precedence.
+// Token values should come from a secrets manager or secure config store.
+store.Add("https://raw.githubusercontent.com/my-org/",   SourceLinkCredential.Token(myOrgPat));
+store.Add("https://raw.githubusercontent.com/other-org/", SourceLinkCredential.Token(otherOrgPat));
+store.Add("https://dev.azure.com/my-company/",            SourceLinkCredential.Token(myAdoPat));
+
+// One HttpClient handles all repositories; correct auth is applied per-request.
+using var client = new HttpClient(store.CreateHandler());
+
+var documents = reader.EnumerateSourceDocuments().ToList();
+var results = await SourceLinkVerifier.VerifyAsync(documents, client);
+```
+
+For custom or GitHub Enterprise hosts, pass the provider explicitly:
+
+```csharp
+store.Add(
+    "https://github.mycompany.com/",
+    new MyGitHubEnterpriseProvider(),
+    SourceLinkCredential.Token(enterprisePat));
+```
+
 #### Custom providers
 
 Implement `ISourceLinkProvider` to support a host not covered above, then prepend

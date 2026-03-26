@@ -1,3 +1,5 @@
+using System.Net.Http.Headers;
+
 namespace SourceLinkFetch;
 
 /// <summary>
@@ -38,13 +40,27 @@ public interface ISourceLinkProvider
     string? ToBrowseUrl(string resolvedUrl);
 
     /// <summary>
+    /// Returns the <c>Authorization</c> header value for the given credential.
+    /// Used by <see cref="SourceLinkCredentialStore"/> to apply per-request
+    /// credentials without modifying <see cref="HttpClient.DefaultRequestHeaders"/>.
+    /// </summary>
+    /// <param name="credential">
+    /// A <see cref="SourceLinkCredential"/> of the kind accepted by this provider.
+    /// An <see cref="ArgumentException"/> is thrown when the wrong kind is supplied.
+    /// </param>
+    AuthenticationHeaderValue GetAuthHeader(SourceLinkCredential credential);
+
+    /// <summary>
     /// Applies the appropriate <c>Authorization</c> header to <paramref name="client"/>
-    /// so that requests to private repositories are authenticated.
+    /// so that all requests to private repositories are authenticated.
+    /// Prefer <see cref="SourceLinkCredentialStore"/> when different credentials
+    /// are needed for different repositories within the same provider.
     /// </summary>
     /// <param name="client">The <see cref="HttpClient"/> used by <see cref="SourceLinkVerifier"/>.</param>
     /// <param name="credential">
-    /// A <see cref="SourceLinkCredential"/> of the kind expected by this provider.
+    /// A <see cref="SourceLinkCredential"/> of the kind accepted by this provider.
     /// An <see cref="ArgumentException"/> is thrown when the wrong kind is supplied.
     /// </param>
-    void ConfigureAuth(HttpClient client, SourceLinkCredential credential);
+    void ConfigureAuth(HttpClient client, SourceLinkCredential credential)
+        => client.DefaultRequestHeaders.Authorization = GetAuthHeader(credential);
 }
