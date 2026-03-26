@@ -4,13 +4,13 @@ using System.Text;
 namespace SourceLinkFetch;
 
 /// <summary>
-/// Configures an <see cref="HttpClient"/> with credentials for accessing
-/// private repository source files through SourceLink URLs.
+/// Convenience methods for configuring an <see cref="HttpClient"/> with credentials
+/// for accessing private repository source files through SourceLink URLs.
 /// </summary>
 /// <remarks>
 /// Credentials are applied as HTTP request headers — never embedded in URLs.
-/// Tokens should be sourced from environment variables or a secrets manager,
-/// not hardcoded in source code.
+/// Obtain token values from a secrets manager or secure configuration store;
+/// do not hardcode them in source code.
 /// </remarks>
 public static class SourceLinkCredentials
 {
@@ -33,12 +33,13 @@ public static class SourceLinkCredentials
     /// <summary>
     /// Configures the client to authenticate with Azure DevOps
     /// (dev.azure.com, *.visualstudio.com, or an on-premises Azure DevOps Server)
-    /// using a personal access token.
+    /// using a personal access token (PAT).
     /// </summary>
     /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
     /// <param name="personalAccessToken">
     /// An Azure DevOps personal access token with at least <c>Code (Read)</c> scope.
     /// </param>
+    /// <seealso cref="ConfigureAzureDevOpsOAuth"/>
     public static void ConfigureAzureDevOps(HttpClient client, string personalAccessToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(personalAccessToken);
@@ -47,6 +48,23 @@ public static class SourceLinkCredentials
             Encoding.ASCII.GetBytes($":{personalAccessToken}"));
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", encoded);
+    }
+
+    /// <summary>
+    /// Configures the client to authenticate with Azure DevOps using an
+    /// AAD / Entra ID OAuth access token.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="aadToken">
+    /// An Azure Active Directory (Entra ID) OAuth access token with the
+    /// Azure DevOps <c>499b84ac-1321-427f-aa17-267ca6975798/.default</c> scope.
+    /// </param>
+    /// <seealso cref="ConfigureAzureDevOps"/>
+    public static void ConfigureAzureDevOpsOAuth(HttpClient client, string aadToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(aadToken);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", aadToken);
     }
 
     /// <summary>
@@ -66,14 +84,36 @@ public static class SourceLinkCredentials
 
     /// <summary>
     /// Configures the client to authenticate with Bitbucket Cloud (bitbucket.org)
+    /// using an API token.
+    /// </summary>
+    /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
+    /// <param name="token">
+    /// A Bitbucket Cloud API token with repository read access.
+    /// API tokens are the current standard; see <see cref="ConfigureBitbucketCloud"/> for
+    /// the legacy app-password approach (deprecated, EOL June 2026).
+    /// </param>
+    public static void ConfigureBitbucketCloudToken(HttpClient client, string token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    /// <summary>
+    /// Configures the client to authenticate with Bitbucket Cloud (bitbucket.org)
     /// using a username and app password.
     /// </summary>
     /// <param name="client">The HTTP client used by <see cref="SourceLinkVerifier"/>.</param>
     /// <param name="username">Your Bitbucket username (not email address).</param>
     /// <param name="appPassword">
     /// A Bitbucket app password with <c>Repositories: Read</c> permission.
-    /// App passwords are created at bitbucket.org → Personal settings → App passwords.
     /// </param>
+    /// <remarks>
+    /// App passwords are deprecated and will stop working June 2026.
+    /// Use <see cref="ConfigureBitbucketCloudToken"/> with an API token instead.
+    /// </remarks>
+    [Obsolete("Bitbucket Cloud app passwords are deprecated and will stop working June 2026. " +
+              "Use ConfigureBitbucketCloudToken with a Bitbucket API token instead.")]
     public static void ConfigureBitbucketCloud(HttpClient client, string username, string appPassword)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(username);

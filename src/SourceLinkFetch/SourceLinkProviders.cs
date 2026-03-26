@@ -64,11 +64,14 @@ public static class SourceLinkProviders
 
     // ---- Auth helpers -----------------------------------------------
 
+    // Accepts Token OR Bearer — both produce Authorization: Bearer {token}.
     private static void ApplyBearer(HttpClient client, SourceLinkCredential cred, string name)
     {
-        if (cred.Kind != SourceLinkCredential.CredentialKind.Token)
+        if (cred.Kind != SourceLinkCredential.CredentialKind.Token &&
+            cred.Kind != SourceLinkCredential.CredentialKind.Bearer)
             throw new ArgumentException(
-                $"{name} requires SourceLinkCredential.Token(token).", nameof(cred));
+                $"{name} requires SourceLinkCredential.Token(token) or SourceLinkCredential.Bearer(token).",
+                nameof(cred));
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", cred.Primary);
     }
@@ -84,7 +87,7 @@ public static class SourceLinkProviders
             new AuthenticationHeaderValue("Basic", encoded);
     }
 
-    // Azure DevOps encodes a PAT as Basic auth with an empty username.
+    // Azure DevOps PAT uses Basic auth with an empty username: Basic :{pat}
     private static void ApplyAzureDevOpsPat(HttpClient client, SourceLinkCredential cred, string name)
     {
         if (cred.Kind != SourceLinkCredential.CredentialKind.Token)
@@ -119,6 +122,7 @@ public static class SourceLinkProviders
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGitHubBrowseUrl(url);
 
+        // Accepts Token (PAT) or Bearer (OAuth) — both become Authorization: Bearer.
         public void ConfigureAuth(HttpClient client, SourceLinkCredential credential) =>
             ApplyBearer(client, credential, Name);
     }
@@ -145,6 +149,7 @@ public static class SourceLinkProviders
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGitLabBrowseUrl(url);
 
+        // Accepts Token (PAT) or Bearer (OAuth) — both become Authorization: Bearer.
         public void ConfigureAuth(HttpClient client, SourceLinkCredential credential) =>
             ApplyBearer(client, credential, Name);
     }
@@ -170,9 +175,29 @@ public static class SourceLinkProviders
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToBitbucketCloudBrowseUrl(url);
 
-        // Bitbucket Cloud uses an app password, not a bearer token.
-        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential) =>
-            ApplyBasic(client, credential, Name);
+        // Accepts Bearer (API token / OAuth — the current and future standard) or
+        // Basic (app password — deprecated, EOL June 2026).
+        // Token is intentionally rejected: Bitbucket Cloud has no PAT concept that
+        // maps to Token; use Bearer for API tokens.
+        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential)
+        {
+            switch (credential.Kind)
+            {
+                case SourceLinkCredential.CredentialKind.Bearer:
+                    ApplyBearer(client, credential, Name);
+                    break;
+                case SourceLinkCredential.CredentialKind.Basic:
+                    ApplyBasic(client, credential, Name);
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"{Name} requires SourceLinkCredential.Bearer(apiToken) or " +
+                        $"SourceLinkCredential.Basic(username, appPassword). " +
+                        $"Note: Bitbucket Cloud app passwords are deprecated (EOL June 2026); " +
+                        $"prefer Bearer with an API token.",
+                        nameof(credential));
+            }
+        }
     }
 
     private sealed class BitbucketServerProvider : ISourceLinkProvider
@@ -204,8 +229,24 @@ public static class SourceLinkProviders
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToBitbucketServerBrowseUrl(url);
 
-        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential) =>
-            ApplyBearer(client, credential, Name);
+        // Accepts Token or Bearer (project/repo-level HTTP access tokens → Bearer header)
+        // or Basic (user-level tokens used as password, or username:password).
+        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential)
+        {
+            switch (credential.Kind)
+            {
+                case SourceLinkCredential.CredentialKind.Token:
+                case SourceLinkCredential.CredentialKind.Bearer:
+                    ApplyBearer(client, credential, Name);
+                    break;
+                case SourceLinkCredential.CredentialKind.Basic:
+                    ApplyBasic(client, credential, Name);
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"{Name} requires Token, Bearer, or Basic credential.", nameof(credential));
+            }
+        }
     }
 
     private sealed class GiteaProvider : ISourceLinkProvider
@@ -230,8 +271,23 @@ public static class SourceLinkProviders
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGiteaBrowseUrl(url);
 
-        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential) =>
-            ApplyBearer(client, credential, Name);
+        // Accepts Token or Bearer (API tokens → Bearer header) or Basic (username:password).
+        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential)
+        {
+            switch (credential.Kind)
+            {
+                case SourceLinkCredential.CredentialKind.Token:
+                case SourceLinkCredential.CredentialKind.Bearer:
+                    ApplyBearer(client, credential, Name);
+                    break;
+                case SourceLinkCredential.CredentialKind.Basic:
+                    ApplyBasic(client, credential, Name);
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"{Name} requires Token, Bearer, or Basic credential.", nameof(credential));
+            }
+        }
     }
 
     private sealed class GitWebProvider : ISourceLinkProvider
@@ -260,7 +316,7 @@ public static class SourceLinkProviders
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToGitWebBrowseUrl(url);
 
-        // GitWeb is typically protected by HTTP Basic auth.
+        // GitWeb is protected at the HTTP server layer; only Basic auth is applicable.
         public void ConfigureAuth(HttpClient client, SourceLinkCredential credential) =>
             ApplyBasic(client, credential, Name);
     }
@@ -309,7 +365,23 @@ public static class SourceLinkProviders
         public string? ToBrowseUrl(string url) =>
             SourceLinkResolver.ConvertToAzureDevOpsBrowseUrl(url);
 
-        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential) =>
-            ApplyAzureDevOpsPat(client, credential, Name);
+        // Accepts Token (PAT → Basic :{pat}) or Bearer (AAD/Entra OAuth → Bearer {token}).
+        public void ConfigureAuth(HttpClient client, SourceLinkCredential credential)
+        {
+            switch (credential.Kind)
+            {
+                case SourceLinkCredential.CredentialKind.Token:
+                    ApplyAzureDevOpsPat(client, credential, Name);
+                    break;
+                case SourceLinkCredential.CredentialKind.Bearer:
+                    ApplyBearer(client, credential, Name);
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"{Name} requires SourceLinkCredential.Token(personalAccessToken) for PATs " +
+                        $"or SourceLinkCredential.Bearer(token) for AAD/Entra OAuth tokens.",
+                        nameof(credential));
+            }
+        }
     }
 }

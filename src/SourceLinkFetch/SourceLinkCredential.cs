@@ -2,20 +2,27 @@ namespace SourceLinkFetch;
 
 /// <summary>
 /// An opaque credential passed to <see cref="ISourceLinkProvider.ConfigureAuth"/>.
-/// Each provider knows which kind it requires and how to encode it as an HTTP header.
+/// Each provider knows which kinds it accepts and how to encode them as HTTP headers.
 /// </summary>
 /// <remarks>
-/// Use <see cref="Token"/> for a single secret (PAT, API token).
-/// Use <see cref="Basic"/> when the host requires a username and separate password
-/// or app-password (e.g. Bitbucket Cloud).
+/// <list type="bullet">
+///   <item><see cref="Token"/> — a personal access token (PAT). The provider
+///     decides the encoding: most use <c>Authorization: Bearer</c>, but Azure
+///     DevOps encodes PATs as <c>Authorization: Basic :{pat}</c>.</item>
+///   <item><see cref="Bearer"/> — an OAuth or AAD/Entra access token. Always
+///     sent as <c>Authorization: Bearer {token}</c> regardless of provider.</item>
+///   <item><see cref="Basic"/> — a username and password (or app password).
+///     Always sent as <c>Authorization: Basic {base64(user:password)}</c>.</item>
+/// </list>
+/// Credentials are applied as HTTP request headers — never embedded in URLs.
 /// </remarks>
 public readonly struct SourceLinkCredential
 {
-    internal enum CredentialKind { Unset, Token, Basic }
+    internal enum CredentialKind { Unset, Token, Bearer, Basic }
 
     internal CredentialKind Kind { get; }
     internal string Primary { get; }    // token, or username
-    internal string Secondary { get; }  // empty for Token, or password
+    internal string Secondary { get; }  // empty for Token/Bearer, or password
 
     private SourceLinkCredential(CredentialKind kind, string primary, string secondary)
     {
@@ -25,8 +32,9 @@ public readonly struct SourceLinkCredential
     }
 
     /// <summary>
-    /// Creates a token-based credential (personal access token, API token, etc.).
-    /// Used by GitHub, GitLab, Azure DevOps, Bitbucket Server, and Gitea.
+    /// A personal access token (PAT) or API key.
+    /// The provider determines the wire encoding — use <see cref="Bearer"/> for
+    /// OAuth / AAD tokens that must always be sent as <c>Authorization: Bearer</c>.
     /// </summary>
     public static SourceLinkCredential Token(string token)
     {
@@ -35,7 +43,19 @@ public readonly struct SourceLinkCredential
     }
 
     /// <summary>
-    /// Creates a username-and-password credential.
+    /// An OAuth, AAD, or Entra access token. Always sent as
+    /// <c>Authorization: Bearer {token}</c> regardless of provider.
+    /// Use <see cref="Token"/> for personal access tokens (PATs) — providers
+    /// may encode those differently (e.g. Azure DevOps uses Basic auth for PATs).
+    /// </summary>
+    public static SourceLinkCredential Bearer(string token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+        return new(CredentialKind.Bearer, token, string.Empty);
+    }
+
+    /// <summary>
+    /// A username and password or app password.
     /// Used by Bitbucket Cloud (username + app password) and GitWeb.
     /// </summary>
     public static SourceLinkCredential Basic(string username, string password)
