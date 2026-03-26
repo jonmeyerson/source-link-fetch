@@ -72,10 +72,28 @@ public sealed class SourceLinkCredentialStore
     /// <param name="credential">
     /// The credential to use for matching requests.
     /// </param>
+    /// <exception cref="ArgumentException">
+    /// Thrown immediately when <paramref name="credential"/> is not a valid kind
+    /// for <paramref name="provider"/> (e.g. passing <see cref="SourceLinkCredential.Token"/>
+    /// to a provider that only accepts <see cref="SourceLinkCredential.Bearer"/>).
+    /// </exception>
     public void Add(string urlPrefix, ISourceLinkProvider provider, SourceLinkCredential credential)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(urlPrefix);
         ArgumentNullException.ThrowIfNull(provider);
+
+        // Validate the credential kind against the provider eagerly so callers
+        // get an ArgumentException at registration time, not during an HTTP request.
+        try
+        {
+            provider.GetAuthHeader(credential);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ArgumentException(
+                $"The credential is not valid for provider \"{provider.Name}\": {ex.Message}",
+                nameof(credential), ex);
+        }
 
         _entries.Add(new Entry(urlPrefix, provider, credential));
 
