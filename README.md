@@ -10,9 +10,24 @@ dotnet add package SourceLinkFetch
 
 - **SourceLink detection** — Check if an assembly has SourceLink metadata
 - **URL resolution** — Map source file paths to repository URLs
-- **Verification** — HTTP HEAD checks to confirm source URLs are accessible
+- **Verification** — HTTP HEAD checks with detailed status (accessible, requires auth, forbidden, not found)
+- **Private repository support** — Authenticate with all major Git hosts
 - **AOT compatible** — No reflection, works with NativeAOT
 - **Zero dependencies** — Only `System.Reflection.Metadata` (in-box)
+
+## Supported hosts
+
+| Host | Package |
+|---|---|
+| GitHub (github.com or Enterprise) | `Microsoft.SourceLink.GitHub` |
+| Azure DevOps (dev.azure.com) | `Microsoft.SourceLink.AzureRepos.Git` |
+| Azure DevOps legacy (*.visualstudio.com) | `Microsoft.SourceLink.AzureRepos.Git` |
+| Azure DevOps Server (on-premises) | `Microsoft.SourceLink.AzureDevOpsServer.Git` |
+| GitLab (gitlab.com or self-hosted) | `Microsoft.SourceLink.GitLab` |
+| Bitbucket Cloud (bitbucket.org) | `Microsoft.SourceLink.Bitbucket.Git` |
+| Bitbucket Server / Data Center | `Microsoft.SourceLink.Bitbucket.Git` |
+| Gitea (self-hosted) | `Microsoft.SourceLink.Gitea` |
+| GitWeb (self-hosted) | `Microsoft.SourceLink.GitWeb` |
 
 ## Usage
 
@@ -49,7 +64,210 @@ var results = await SourceLinkVerifier.VerifyAsync(documents, client);
 
 foreach (var result in results)
 {
-    string status = result.IsAccessible ? "✓" : "✗";
-    Console.WriteLine($"  {status} {result.FilePath}");
+    Console.WriteLine(result.Status switch
+    {
+        VerificationStatus.Accessible             => $"  ✓ {result.FilePath}",
+        VerificationStatus.RequiresAuthentication => $"  ⚿ {result.FilePath} (401 — needs credentials)",
+        VerificationStatus.Forbidden              => $"  ✗ {result.FilePath} (403 — insufficient scope)",
+        VerificationStatus.NotFound               => $"  ✗ {result.FilePath} (404 — broken link)",
+        VerificationStatus.NetworkError           => $"  ✗ {result.FilePath} ({result.Error})",
+        _                                         => $"  ✗ {result.FilePath} (HTTP {result.HttpStatusCode})",
+    });
 }
+```
+
+`VerificationResult` also exposes `HttpStatusCode` (nullable `int`) and the
+convenience property `IsAccessible` for simple pass/fail checks.
+
+### Provider detection
+
+`SourceLinkProviders.Detect` inspects a resolved URL and returns the matching
+provider, giving you browse-URL conversion and auth configuration without
+needing to know which host produced the URL.
+
+```csharp
+// Build a credential map — source token values from your secrets store
+var credentialMap = new Dictionary<ISourceLinkProvider, SourceLinkCredential>
+{
+    [SourceLinkProviders.GitHub]         = SourceLinkCredential.Token(myGitHubPat),
+    [SourceLinkProviders.AzureDevOps]    = SourceLinkCredential.Token(myAdoPat),
+    // or for AAD/Entra OAuth:          = SourceLinkCredential.Bearer(myAadToken),
+    [SourceLinkProviders.GitLab]         = SourceLinkCredential.Token(myGitLabPat),
+    [SourceLinkProviders.BitbucketCloud] = SourceLinkCredential.Bearer(myBitbucketApiToken),
+    [SourceLinkProviders.BitbucketServer]= SourceLinkCredential.Token(myBitbucketServerToken),
+    [SourceLinkProviders.Gitea]          = SourceLinkCredential.Token(myGiteaToken),
+};
+
+// One HttpClient per provider (each gets its own auth header)
+var clients = credentialMap.ToDictionary(
+    kvp => kvp.Key,
+    kvp => {
+        var client = new HttpClient();
+        kvp.Key.ConfigureAuth(client, kvp.Value);
+        return client;
+    });
+
+var documents = reader.EnumerateSourceDocuments().ToList();
+
+// Convert to browse URLs
+foreach (var doc in documents)
+{
+    var provider = SourceLinkProviders.Detect(doc.ResolvedUrl);
+    string? browseUrl = provider?.ToBrowseUrl(doc.ResolvedUrl) ?? doc.ResolvedUrl;
+    Console.WriteLine($"  {doc.FilePath} → {browseUrl}");
+}
+
+// Verify, routing each document to the right authenticated client
+var results = await Task.WhenAll(
+    documents
+        .GroupBy(d => SourceLinkProviders.Detect(d.ResolvedUrl))
+        .Select(g =>
+        {
+            var client = g.Key is not null && clients.TryGetValue(g.Key, out var c)
+                ? c : new HttpClient();
+            return SourceLinkVerifier.VerifyAsync(g, client);
+        }));
+```
+
+The named providers on `SourceLinkProviders` (`GitHub`, `AzureDevOps`, etc.) are
+the same instances used by `Detect`, so dictionary keying by reference works correctly.
+
+### Per-repository credentials with `SourceLinkCredentialStore`
+
+When different organisations (or different repositories) on the same host
+require different credentials, use `SourceLinkCredentialStore`. It maps URL
+prefixes to credentials — analogous to `packageSourceCredentials` in
+`NuGet.config` — and injects the right `Authorization` header per-request via
+a `DelegatingHandler`, without touching `DefaultRequestHeaders`.
+
+```csharp
+var store = new SourceLinkCredentialStore();
+
+// Register credentials by URL prefix — longer prefixes take precedence.
+// Token values should come from a secrets manager or secure config store.
+store.Add("https://raw.githubusercontent.com/my-org/",   SourceLinkCredential.Token(myOrgPat));
+store.Add("https://raw.githubusercontent.com/other-org/", SourceLinkCredential.Token(otherOrgPat));
+store.Add("https://dev.azure.com/my-company/",            SourceLinkCredential.Token(myAdoPat));
+
+// One HttpClient handles all repositories; correct auth is applied per-request.
+using var client = new HttpClient(store.CreateHandler());
+
+var documents = reader.EnumerateSourceDocuments().ToList();
+var results = await SourceLinkVerifier.VerifyAsync(documents, client);
+```
+
+For custom or GitHub Enterprise hosts, pass the provider explicitly:
+
+```csharp
+store.Add(
+    "https://github.mycompany.com/",
+    new MyGitHubEnterpriseProvider(),
+    SourceLinkCredential.Token(enterprisePat));
+```
+
+#### Custom providers
+
+Implement `ISourceLinkProvider` to support a host not covered above, then prepend
+it to detection by building a custom list:
+
+```csharp
+IReadOnlyList<ISourceLinkProvider> allProviders =
+[
+    new MyInternalGitHubEnterpriseProvider(),
+    .. SourceLinkProviders.All,  // built-ins as fallback
+];
+
+ISourceLinkProvider? provider = allProviders
+    .FirstOrDefault(p => p.Matches(doc.ResolvedUrl));
+```
+
+### Convert raw URLs to browsable URLs
+
+Each host stores a raw/API URL in the SourceLink JSON. Use the
+`ConvertTo*BrowseUrl` helpers to turn those into links a human can open,
+or call `provider.ToBrowseUrl(url)` when using provider detection.
+
+```csharp
+// GitHub:  raw.githubusercontent.com → github.com/…/raw/…
+string? url = SourceLinkResolver.ConvertToGitHubBrowseUrl(doc.ResolvedUrl);
+
+// GitLab:  /-/raw/ → /-/blob/
+string? url = SourceLinkResolver.ConvertToGitLabBrowseUrl(doc.ResolvedUrl);
+
+// Bitbucket Cloud:  /raw/ → /src/
+string? url = SourceLinkResolver.ConvertToBitbucketCloudBrowseUrl(doc.ResolvedUrl);
+
+// Bitbucket Server:  /raw/ → /browse/
+string? url = SourceLinkResolver.ConvertToBitbucketServerBrowseUrl(doc.ResolvedUrl);
+
+// Gitea:  /raw/commit/ → /src/commit/
+string? url = SourceLinkResolver.ConvertToGiteaBrowseUrl(doc.ResolvedUrl);
+
+// GitWeb:  a=blob_plain → a=blob
+string? url = SourceLinkResolver.ConvertToGitWebBrowseUrl(doc.ResolvedUrl);
+
+// Azure DevOps (all variants):  _apis/git/repositories/…/items → _git/…
+string? url = SourceLinkResolver.ConvertToAzureDevOpsBrowseUrl(doc.ResolvedUrl);
+```
+
+### Private repositories
+
+`SourceLinkVerifier` uses whichever `HttpClient` you supply, so authentication
+is handled by configuring that client before passing it in. Credentials are
+sent as HTTP headers — never embedded in URLs.
+
+**Obtain token values from a secrets manager or secure configuration store.
+Never hardcode credentials in source code.**
+
+#### Credential kinds
+
+| Kind | Factory | Use when |
+|---|---|---|
+| `Token` | `SourceLinkCredential.Token(pat)` | A personal access token (PAT). Provider determines encoding — most use Bearer; Azure DevOps uses Basic. |
+| `Bearer` | `SourceLinkCredential.Bearer(token)` | An OAuth, AAD, or Entra access token. Always sent as `Authorization: Bearer`. |
+| `Basic` | `SourceLinkCredential.Basic(user, pass)` | A username and password or app password. |
+
+#### Auth scheme reference
+
+| Provider | Accepted credentials | Wire encoding |
+|---|---|---|
+| GitHub | `Token`, `Bearer` | `Authorization: Bearer {token}` |
+| GitLab | `Token`, `Bearer` | `Authorization: Bearer {token}` |
+| Bitbucket Cloud | `Bearer`, `Basic`¹ | Bearer → `Authorization: Bearer {token}`; Basic → `Authorization: Basic {base64(user:pass)}` |
+| Bitbucket Server | `Token`, `Bearer`, `Basic` | Token/Bearer → `Authorization: Bearer {token}`; Basic → `Authorization: Basic {base64(user:pass)}` |
+| Gitea | `Token`, `Bearer`, `Basic` | Token/Bearer → `Authorization: Bearer {token}`; Basic → `Authorization: Basic {base64(user:pass)}` |
+| GitWeb | `Basic` | `Authorization: Basic {base64(user:pass)}` |
+| Azure DevOps | `Token`, `Bearer` | Token (PAT) → `Authorization: Basic {base64(":{pat}")}` ; Bearer (OAuth) → `Authorization: Bearer {token}` |
+
+¹ Bitbucket Cloud app passwords (`Basic`) are deprecated and stop working June 2026. Use API tokens (`Bearer`) instead.
+
+#### Configuring a single provider
+
+Call `ConfigureAuth` on the provider — it owns the encoding rules for its host,
+so the logic lives in one place:
+
+```csharp
+// GitHub — PAT (Token) or OAuth (Bearer)
+SourceLinkProviders.GitHub.ConfigureAuth(client, SourceLinkCredential.Token(pat));
+
+// Azure DevOps — PAT
+SourceLinkProviders.AzureDevOps.ConfigureAuth(client, SourceLinkCredential.Token(pat));
+
+// Azure DevOps — AAD/Entra OAuth token
+SourceLinkProviders.AzureDevOps.ConfigureAuth(client, SourceLinkCredential.Bearer(aadToken));
+
+// GitLab — PAT with read_repository scope
+SourceLinkProviders.GitLab.ConfigureAuth(client, SourceLinkCredential.Token(pat));
+
+// Bitbucket Cloud — API token (current standard)
+SourceLinkProviders.BitbucketCloud.ConfigureAuth(client, SourceLinkCredential.Bearer(apiToken));
+
+// Bitbucket Server — HTTP access token
+SourceLinkProviders.BitbucketServer.ConfigureAuth(client, SourceLinkCredential.Token(token));
+
+// Gitea — API token
+SourceLinkProviders.Gitea.ConfigureAuth(client, SourceLinkCredential.Token(token));
+
+// GitWeb or any Basic-auth server
+SourceLinkProviders.GitWeb.ConfigureAuth(client, SourceLinkCredential.Basic(username, password));
 ```
